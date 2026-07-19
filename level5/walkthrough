@@ -1,6 +1,6 @@
 # level5
 
-Let's do our classical recognition here.
+Let's begin our initial analysis of the binary.
 
 Here is the reconstructed C code of the binary:
 ```c
@@ -26,19 +26,17 @@ int main(void) {
 }
 ```
 
-We have a function `o` and a function `n`. The only function called from `main` is `n`. The function `o` is the one that spawns a shell, so we must find a way to execute it.
+We have functions `o` and `n`. The only function called from `main` is `n`. The function `o` contains the code to spawn a shell, so we must redirect execution to it.
 
-But there is a catch: we do not have a typical return from `n` because it calls `exit(1)`. This means we cannot simply overwrite the saved return address (EIP) on the stack.
+However, because `n` calls `exit(1)` directly, the program never returns from the stack frame normally. This means we cannot simply hijack the saved return address (EIP).
 
-Instead, we can exploit this by overwriting the `exit` function pointer in the Global Offset Table (GOT).
-
-To do this, we must find the necessary addresses and explore the memory.
+Instead, we can exploit this by overwriting the entry for `exit` in the Global Offset Table (GOT) with the address of `o`.
 
 ### How PLT and GOT work
 
-`exit` is a libc function, meaning its code lives outside our binary in a standard library. When the program runs, libc is loaded at a random address in memory. To allow the program to find and execute `exit`, the compiler sets up a **Procedure Linkage Table (PLT)** and a **Global Offset Table (GOT)**.
+Since `exit` is a libc function, its code is resolved dynamically at runtime. To facilitate this, the system uses the Procedure Linkage Table (PLT) and the Global Offset Table (GOT).
 
-The PLT is like a lookup table that redirects calls to the corresponding "mailbox" in the GOT. The GOT holds the actual memory address of the function, and unlike the PLT, the GOT is writable.
+The PLT acts as a jump table that queries the GOT for the actual memory address of the function. Unlike the PLT, the GOT resides in a writable segment of memory.
 
 Think of it like this:
 ```text
@@ -56,7 +54,7 @@ We cannot change the index (the PLT), but we can change the mailbox number (the 
 [2]      [cony]  [77]
 ```
 
-By changing `exit`'s GOT entry to the address of `o`, the program will branch to `o` instead of `exit` when `exit(1)` is executed.
+By overwriting `exit`'s GOT entry with the address of `o`, the program will branch to `o` instead of the original exit routine when `exit(1)` is executed.
 
 ### Finding the Addresses
 
@@ -67,7 +65,7 @@ By changing `exit`'s GOT entry to the address of `o`, the program will branch to
    Non-debugging symbols:
    0x080484a4  o
    ```
-   So the target address is `0x080484a4`. Converting it to decimal gives `134513828`.
+   The target address is `0x080484a4`. Converting it to decimal gives `134513828`.
 
 2. **GOT entry of `exit`:**
    We disassemble `exit@plt` in GDB:
@@ -95,9 +93,7 @@ By changing `exit`'s GOT entry to the address of `o`, the program will branch to
 - Target Value: `134513828` (`0x080484a4`)
 - Stack Offset: `4`
 
-We place the 4-byte GOT address of `exit` at the beginning of our format string.
-We need `134513828` characters printed in total. Since the address occupies 4 bytes, we print `134513828 - 4 = 134513824` characters of padding.
-Then we use `%4$n` to write this count to the address at position 4.
+We place the 4-byte GOT address of `exit` at the beginning of our format string. We need `134513828` characters printed in total. Since the address occupies 4 bytes, we print `134513828 - 4 = 134513824` characters of padding. Then we use `%4$n` to write this count to the address at position 4.
 
 Using `[::-1]` to write the target address in little-endian format, we build the payload command:
 ```bash

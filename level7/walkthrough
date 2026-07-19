@@ -1,6 +1,6 @@
 # level7
 
-Analyzing the code, we can see we got two nodes.
+Analyzing the code, we see that the program allocates two node structures.
 
 Here is the reconstructed C code:
 ```c
@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
 }
 ```
 
-We allocate memory for each node struct, and each one allocates 8 bytes for the buffer.
+The program allocates memory for each `Node` struct, which in turn allocates an 8-byte buffer.
 
 The heap layout looks like this:
 ```text
@@ -61,11 +61,11 @@ In terms of sizes:
 8 + sizeof(node) + 8 + 8(buffer) + 8 + sizeof(node) + 8 + 8(buffer)
 ```
 
-In this case, we use `argv[1]` to overflow `node1`'s buffer, and `argv[2]` to overwrite the target buffer of `node2`.
+Here, we exploit the vulnerability by using `argv[1]` to overflow `node1->buf` and `argv[2]` to write the target address.
 
 ### Exploitation Strategy
 
-The only function called after the copies is `puts("~~")`. We can use the GOT overwrite trick here.
+The only function called after the buffer copies is `puts("~~")`. We can use the GOT overwrite technique to hijack this call.
 
 Disassembling `puts@plt` in GDB:
 ```text
@@ -78,31 +78,18 @@ End of assembler dump.
 ```
 The GOT address of `puts` is `0x08049928`.
 
-Now, how does the program copy?
-```c
-if (argc > 2) {
-    strcpy(node1->buf, argv[1]);
-    strcpy(node2->buf, argv[2]);
-}
-```
-`strcpy` puts content into the target address pointer. In this case, `node1->buf` and `node2->buf` are heap pointers.
+`strcpy` writes content directly to the address pointed to by the destination parameter. In this case, `node1->buf` and `node2->buf` are heap pointers.
 
 We can use the first `strcpy` (with `argv[1]`) to overflow past `node1->buf` and overwrite the `node2->buf` pointer stored inside the `node2` struct. This way, when the second `strcpy` runs, it will copy `argv[2]` into whatever address we wrote into `node2->buf`—which will be `puts`'s GOT entry address.
 
 ### Offset Calculation
 
-Let's look at the memory layout of the `Node` struct:
+In memory, each `Node` structure is laid out as:
 ```text
-[int id (4 bytes)] [char *buf pointer (4 bytes)]
+[id (4 bytes)] [buf pointer (4 bytes)]
 ```
 
-In memory, a node looks like this:
-```text
-[id bytes (4)] [buf pointer bytes (4)]
-```
-
-We start writing from `node1->buf`.
-To reach `node2->buf` pointer, we need to overwrite:
+Since our input writes starting at `node1->buf`, we need to overwrite the following bytes to reach the `node2->buf` pointer:
 - `8` bytes of `node1->buf` user data.
 - `8` bytes of `node2` chunk metadata.
 - `4` bytes of `node2->id`.

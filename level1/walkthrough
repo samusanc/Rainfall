@@ -1,27 +1,27 @@
 # level1
 
-We first decompile the code into C.
+First, we decompile the code into C.
 
-We can see that we can trigger a segmentation fault with 76 characters of input. We also see that the program has a function named `run` that executes a shell, but it is not accessible from `main` (unlike the level before).
+We notice that we can trigger a segmentation fault by supplying 76 characters of input. We also see that the program has a helper function named `run` that executes a shell, but it is not called by `main`.
 
-So we will need to use a stack-based buffer overflow to call that function.
+Therefore, we can use a stack-based buffer overflow to redirect execution and run that function.
 
-To do so, first we need to know the address of that function. The offset in this case is easy—76 bytes—and that is all.
+To do this, we need to know the target address of `run` and the offset. The offset in this case is exactly 76 bytes.
 
-First, we get the address of the `run` function by running the program through GDB and extracting the value with `info functions`:
+First, we get the address of the `run` function by running the program in GDB and using `info functions`:
 ```text
 0x08048444
 ```
 
-So we can write a python command to create our custom payload using the `[::-1]` slice to reverse the endianness of the address:
+Using Python, we can generate our exploit payload. We use the `[::-1]` slice to reverse the target address bytes to account for little-endian endianness:
 ```bash
 python -c 'print "a" * 76 + "\x08\x04\x84\x44"[::-1]' > payload
 ```
 
-And then we execute the payload with pipes to exploit the binary:
+Then we execute the payload using pipes to exploit the binary:
 ```bash
 (cat payload; cat) | ./level1
 ```
 
-### Why we can replace the address
-To understand why this works, we need to understand the concept of the return instruction (`ret`). When a return is called, the stack is used to change the execution pointer. In this case, the offset of the input buffer matches the offset to the saved return address (EIP). While this is not always the case, we need to verify how the base pointer (EBP) is set up and calculate the offset accordingly.
+### Why we can overwrite the address
+To understand why this works, we need to look at how the return instruction (`ret`) behaves. When a function returns, the program pops the saved return address from the stack into the instruction pointer (EIP) to resume execution. In this case, the buffer boundary aligns perfectly with the saved return address (EIP) offset. While the offset matches the buffer size here, we should always verify the stack layout and calculate the exact offset by checking how the base pointer (EBP) is set up.

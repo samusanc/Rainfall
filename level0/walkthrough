@@ -1,8 +1,8 @@
 # level0
 
-This first flag is easy. You need to see what the program is doing with the GDB debugger.
+This first level is simple. We need to analyze the binary in GDB to see what it is doing.
 
-The program is obfuscated, so standard Ghidra or reverse engineering tools will not work out-of-the-box. You have to look at what the assembly is doing, and it is actually quite simple.
+The program is obfuscated, meaning standard decompilers like Ghidra will not work out-of-the-box. Instead, we must look at the disassembly, which is straightforward.
 
 Here is the disassembled code of `main`:
 
@@ -55,16 +55,13 @@ Here is the disassembled code of `main`:
  0x08048f86 <+198>:	ret
 ```
 
-If you read the instructions, you can see that at the beginning, it does a comparison with your input at this line:
+If you look closely at the instructions, you can see that at the beginning, it performs a comparison on the input at this line:
 ```assembly
 0x08048ed9 <+25>:	cmp    eax,0x1a7
 ```
 
-Here it is comparing with a hexadecimal number `0x1a7`, which translated to decimal is `423`.
+Here, it compares the input to the hexadecimal value `0x1a7`, which is `423` in decimal.
 
-If you are curious, you will input the number, and that is it—the problem is solved.
+If we input `423`, the condition is satisfied and the problem is solved. If we do not input the correct number, the comparison fails and the program calls `fwrite` to print `No !`. Otherwise, it drops privileges and calls `execv` to spawn a shell.
 
-Otherwise, you can see in the following assembly code that if the comparison fails, it jumps to instructions that call `fwrite` to print `No !`.
-If the comparison matches, it proceeds to call `setresgid`, `setresuid`, and then executes `execv` to launch a shell.
-
-This is the first flag, so the objective is to teach us how to read basic assembly instructions since the C code is obfuscated to prevent reading by decompilers.
+Since this is the first level, the goal is to teach us how to read basic assembly instructions since the C code is obfuscated to prevent decompilation.

