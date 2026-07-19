@@ -1,6 +1,6 @@
 # Rainfall walkthroughs
 
-Index of solution walkthroughs for the mandatory levels of the project:
+Index of solution walkthroughs for the mandatory and bonus levels of the project:
 
 - [Level 0](level0/Ressources/walkthrough.md)
 - [Level 1](level1/Ressources/walkthrough.md)
@@ -10,3 +10,7 @@ Index of solution walkthroughs for the mandatory levels of the project:
 - [Level 5](level5/Ressources/walkthrough.md)
 - [Level 6](level6/Ressources/walkthrough.md)
 - [Level 7](level7/Ressources/walkthrough.md)
+- [Level 8](level8/Ressources/walkthrough.md)
+- [Level 9](level9/Ressources/walkthrough.md)
+- [Bonus 0](bonus0/Ressources/walkthrough.md)
+- [Bonus 1](bonus1/Ressources/walkthrough.md)
