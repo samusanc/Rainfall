@@ -1,0 +1,173 @@
+# Rainfall — End Writeup
+
+## Decompilation
+
+We opened the binary in Ghidra and found that `main` opens the password file, reads its contents into two local buffers, and compares part of the password against `argv[1]`.
+
+```c
+undefined4 main(int param_1, int param_2)
+{
+  undefined4 uVar1;
+  int iVar2;
+  char *pcVar3;
+  byte bVar4;
+  char local_98[65];
+  undefined1 local_57;
+  char local_56[66];
+  FILE *local_14;
+
+  bVar4 = 0;
+  local_14 = fopen("/home/user/end/.pass", "r");
+  pcVar3 = local_98;
+
+  for (iVar2 = 0x21; iVar2 != 0; iVar2 = iVar2 - 1) {
+    pcVar3[0] = '\0';
+    pcVar3[1] = '\0';
+    pcVar3[2] = '\0';
+    pcVar3[3] = '\0';
+    pcVar3 = pcVar3 + ((uint)bVar4 * -2 + 1) * 4;
+  }
+
+  if ((local_14 == (FILE *)0x0) || (param_1 != 2)) {
+    uVar1 = 0xffffffff;
+  }
+  else {
+    fread(local_98, 1, 0x42, local_14);
+    local_57 = 0;
+    iVar2 = atoi(*(char **)(param_2 + 4));
+    local_98[iVar2] = '\0';
+    fread(local_56, 1, 0x41, local_14);
+    fclose(local_14);
+
+    iVar2 = strcmp(local_98, *(char **)(param_2 + 4));
+    if (iVar2 == 0) {
+      execl("/bin/sh", "sh", 0);
+    }
+    else {
+      puts(local_56);
+    }
+
+    uVar1 = 0;
+  }
+
+  return uVar1;
+}
+```
+
+The program opens `/home/user/end/.pass` using `fopen` and reads the first 66 bytes into `local_98`.
+
+It then converts `argv[1]` to an integer using `atoi` and uses the result as an index into `local_98`:
+
+```c
+iVar2 = atoi(argv[1]);
+local_98[iVar2] = '\0';
+```
+
+Finally, it compares `local_98` against the original `argv[1]`:
+
+```c
+strcmp(local_98, argv[1]);
+```
+
+If both strings are equal, the program executes `/bin/sh`.
+
+## Working backwards from the comparison
+
+The final condition gives us the target:
+
+```c
+if (strcmp(local_98, argv[1]) == 0)
+```
+
+To obtain the shell, the hidden string stored in `local_98` must be equal to the string we provide in `argv[1]`.
+
+At first this appears impossible because `local_98` contains data read from the password file, which we cannot inspect directly.
+
+However, `argv[1]` has two separate roles in the program.
+
+It is used as the string passed to `strcmp`:
+
+```c
+strcmp(local_98, argv[1]);
+```
+
+It is also converted with `atoi` and used to choose where `local_98` is terminated:
+
+```c
+local_98[atoi(argv[1])] = '\0';
+```
+
+This means that although we cannot control the original contents of `local_98`, we can control where the string ends.
+
+## Making the hidden string empty
+
+The easiest string to reproduce exactly is the empty string.
+
+To turn `local_98` into an empty string, we need the program to write a null byte at its first position:
+
+```c
+local_98[0] = '\0';
+```
+
+Therefore, `atoi(argv[1])` must return `0`.
+
+Providing `"0"` would satisfy the numeric requirement:
+
+```c
+atoi("0") == 0
+```
+
+but the later comparison would fail:
+
+```c
+strcmp("", "0") != 0
+```
+
+The first string would be empty, while `argv[1]` would still contain the character `0`.
+
+The useful behavior is that `atoi` also returns `0` when the input does not begin with a valid number.
+
+An empty string therefore gives:
+
+```c
+atoi("") == 0
+```
+
+The program executes:
+
+```c
+local_98[0] = '\0';
+```
+
+which turns the hidden password buffer into an empty C string.
+
+The final comparison then becomes:
+
+```c
+strcmp("", "")
+```
+
+Both strings are equal, so `strcmp` returns `0` and the program executes `/bin/sh`.
+
+## Execution
+
+We run the binary with an empty string as its only argument:
+
+```bash
+./end ""
+```
+
+This causes:
+
+```text
+atoi("")        -> 0
+local_98[0]     -> '\0'
+strcmp("", "")  -> 0
+```
+
+The condition succeeds and gives us the shell:
+
+```bash
+$ whoami
+end
+```
