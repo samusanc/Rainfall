@@ -14,3 +14,4 @@ Index of solution walkthroughs for the mandatory and bonus levels of the project
 - [Level 9](level9/Ressources/walkthrough.md)
 - [Bonus 0](bonus0/Ressources/walkthrough.md)
 - [Bonus 1](bonus1/Ressources/walkthrough.md)
+- [Bonus 3](bonus3/Ressources/walkthrough.md)
